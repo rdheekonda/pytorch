@@ -638,7 +638,7 @@ class CppWrapperCodeGen(WrapperCodeGen):
         ext = "so"
         extra = cpp_compile_command("i", "o", vec_isa=picked_vec_isa)
         # \n is required to match with the CodeCache behavior
-        source_code = "\n" + code.getvalue()
+        source_code = "\n" + code.getrawvalue()
         _, _, kernel_path = get_code_path(source_code, ext, extra)
         return kernel_path
 
