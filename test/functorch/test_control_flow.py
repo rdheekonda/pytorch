@@ -2,6 +2,7 @@
 import torch
 from functorch.experimental.cond import cond
 from functorch.experimental import control_flow
+from functorch.experimental import functionalize
 from torch.fx.experimental.proxy_tensor import make_fx
 
 from torch.testing._internal.common_utils import run_tests, TestCase
@@ -72,6 +73,49 @@ class TestControlFlowTraced(TestCase):
         self.assertEqual(result_true_false, x + x + x)
 
         self.assertEqual(result_false_true, torch.cos(x))
+
+    def test_cond_functionalized(self):
+        def true_fn(x):
+            return x.sin().max()
+
+        def false_fn(x):
+            return x.cos().min()
+
+        def f(x):
+            pred = x.shape[0] == 1
+            return cond(pred, true_fn, false_fn, [x])
+
+        example_inputs = (torch.ones(4, 5),)
+        functional_f = functionalize(f)
+        self.assertEqual(functional_f(*example_inputs), f(*example_inputs))
+
+        graph_module = make_fx(functionalize(f))(*example_inputs)
+        self.assertTrue(torch.allclose(graph_module(*example_inputs), f(*example_inputs)))
+
+    def test_cond_functionalized_nested(self):
+        def true_true_fn(x):
+            return x.sin().max()
+
+        def true_false_fn(x):
+            return x.cos().min()
+
+        def true_fn(x):
+            pred = x.shape[0] == 1
+            return cond(pred, true_true_fn, true_false_fn, [x])
+
+        def false_fn(x):
+            return x.sum()
+
+        def f(x):
+            pred = x.shape[0] == 1
+            return cond(pred, true_fn, false_fn, [x])
+
+        example_inputs = (torch.ones(4, 5),)
+        functional_f = functionalize(f)
+        self.assertEqual(functional_f(*example_inputs), f(*example_inputs))
+
+        graph_module = make_fx(functionalize(f))(*example_inputs)
+        self.assertTrue(torch.allclose(graph_module(*example_inputs), f(*example_inputs)))
 
     def test_cond_nested_traced_other_inputs(self):
         def true_nested(y):
