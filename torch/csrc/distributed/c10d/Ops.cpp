@@ -577,7 +577,6 @@ c10::intrusive_ptr<Work> recv(
   return op.call(tensors, process_group, srcRank, tag);
 }
 
-
 // Below are ProcessGroup's corresponding ops for each backend. Ops are but
 // routed through the dispatcher to be dispatched to the appropriate backend.
 // Currently a no-op as the process group does not have a list of backends.
