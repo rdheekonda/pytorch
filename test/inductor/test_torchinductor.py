@@ -5114,6 +5114,16 @@ if HAS_CPU:
                 fn(a, b)
             assert "kernel_cpp_0" in (e.name for e in prof.profiler.function_events)
 
+        def test_input_is_view(self):
+            @torch._dynamo.optimize("inductor")
+            def fn(a):
+                unsqueeze_ = torch.ops.aten.unsqueeze_.default(a, 0)
+                return unsqueeze_
+
+            args = [((1, 1, 1, 12, 11, 3), (396, 396, 396, 33, 3, 1), torch.int64, 'cpu')]
+            args = [rand_strided(sh, st, dt, dev) for (sh, st, dt, dev) in args]
+            fn(*args)
+
 
 if HAS_CUDA:
     import triton
