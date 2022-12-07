@@ -10,18 +10,21 @@ from .. import variables
 from ..bytecode_transformation import create_instruction
 from ..exc import unimplemented
 from ..source import AttrSource, GetItemSource
-from ..utils import make_cell
+from ..utils import istensor, make_cell
 from .base import typestr, VariableTracker
 
+# todo annotate types
+default_tensor_values = {}
 
-def wrap_bound_arg(val, options):
+
+def wrap_bound_arg(val, options, tx):
     if isinstance(val, dict):
         return variables.ConstDictVariable(
-            {k: wrap_bound_arg(v, options) for k, v in val.items()}, dict, **options
+            {k: wrap_bound_arg(v, options, tx) for k, v in val.items()}, dict, **options
         )
     elif isinstance(val, (tuple, list)):
         cls = variables.BaseListVariable.cls_for(type(val))
-        return cls([wrap_bound_arg(x, options) for x in val], **options)
+        return cls([wrap_bound_arg(x, options, tx) for x in val], **options)
     elif variables.ConstantVariable.is_literal(val):
         return variables.ConstantVariable(val, **options)
     elif isinstance(val, types.FunctionType):
@@ -30,16 +33,27 @@ def wrap_bound_arg(val, options):
         return variables.EnumVariable(val, **options)
     elif isinstance(val, (type, abc.ABCMeta)):
         return variables.UserDefinedClassVariable(val, **options)
+    elif istensor(val):
+        # Assumption: this is only called from InliningInstructionTranslator, in which case
+        # it is assured we will not 'reconstruct' this value in codegen, since the usage is
+        # entirely inlined.
+        # TODO - how can we assert this? we expect to not reach this case for non-inline,
+        # since InstructionTranslator __init__ prepares VariableTrackers for args of top
+        # level function including defaults.
+        #
+        # name/source aren't obvious to me; do we need a source in this case? we aren't
+        # reconstructing this value by definition, since this is an inlining call
+        return tx.output.register_attr_or_module(val)
     else:
         assert isinstance(val, VariableTracker), typestr(val)
         return val
 
 
-def wrap_args_kwargs(result, options):
+def wrap_args_kwargs(result, options, tx):
     for k, v in list(result.items()):
         if isinstance(v, (tuple, dict)):
             # args/kwargs
-            result[k] = wrap_bound_arg(v, options)
+            result[k] = wrap_bound_arg(v, options, tx)
 
 
 def init_cellvars(parent, result, code):
@@ -117,9 +131,8 @@ class UserFunctionVariable(BaseUserFunctionVariable):
     def bind_args(self, parent, args, kwargs):
         assert not self.is_constant
         options = VariableTracker.propagate([self])
-        wrap = functools.partial(wrap_bound_arg, options=options)
-
         tx = parent.output.root_tx
+        wrap = functools.partial(wrap_bound_arg, options=options, tx=tx)
 
         fn: types.FunctionType = self.fn
         fake_func = types.FunctionType(
@@ -138,7 +151,7 @@ class UserFunctionVariable(BaseUserFunctionVariable):
         bound.apply_defaults()
         result = dict(bound.arguments.items())
 
-        wrap_args_kwargs(result, options)
+        wrap_args_kwargs(result, options, tx)
         closure_cells = init_cellvars(parent, result, fn.__code__)
         closure = self.fn.__closure__ or ()
         assert len(closure) == len(self.fn.__code__.co_freevars)
@@ -368,6 +381,7 @@ class NestedUserFunctionVariable(BaseUserFunctionVariable):
 
     def bind_args(self, parent, args, kwargs):
         code = self.get_code()
+        tx = parent.output.root_tx
         func = types.FunctionType(
             code,
             self.f_globals,
@@ -381,8 +395,7 @@ class NestedUserFunctionVariable(BaseUserFunctionVariable):
         bound = inspect.signature(func).bind(*args, **kwargs)
         bound.apply_defaults()
         result = dict(bound.arguments.items())
-
-        wrap_args_kwargs(result, VariableTracker.propagate(self))
+        wrap_args_kwargs(result, VariableTracker.propagate(self), tx)
         closure_cells = init_cellvars(parent, result, code)
 
         for idx, name in enumerate(code.co_freevars):
