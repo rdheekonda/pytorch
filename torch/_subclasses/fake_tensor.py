@@ -492,6 +492,11 @@ class FakeTensor(torch.Tensor):
     fake_mode: "FakeTensorMode"
     constant: Optional[torch.Tensor]
 
+    # DEBUG_MODE on FakeTensor enables a debug mode.
+    # Today, this mode only records fake tensor creation stack traces,
+    # But in the future will add more.
+    DEBUG_MODE = False
+
     # Note: [Fake Tensor Dispatch Keys]
     # In order to model the behavior of device-specific autocast
     # and autograd logic, we update the dispatch keys of FakeTensors
@@ -538,6 +543,10 @@ class FakeTensor(torch.Tensor):
         self.fake_device = device
         self.fake_mode = fake_mode
         self.constant = constant
+        if FakeTensor.DEBUG_MODE:
+            import traceback
+
+            self._debug_trace = traceback.extract_stack()
 
     @staticmethod
     def from_tensor(t, fake_mode):
