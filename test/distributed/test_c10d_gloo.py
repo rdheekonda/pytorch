@@ -1429,11 +1429,8 @@ class ProcessGroupGlooTest(MultiProcessTestCase):
         store = c10d.FileStore(self.file_name, self.world_size)
         pg = c10d._round_robin_process_groups(
             [
-                c10d.ProcessGroupGloo(
-                    c10d.PrefixStore(str(i), store),
-                    self.rank,
-                    self.world_size,
-                    self.opts(),
+                self._create_process_group_gloo(
+                    c10d.PrefixStore(str(i), store), self.rank, self.world_size, self.opts()
                 )
                 for i in range(num_process_groups)
             ]
@@ -1453,11 +1450,8 @@ class ProcessGroupGlooTest(MultiProcessTestCase):
         def create(num, prefix):
             return c10d._round_robin_process_groups(
                 [
-                    c10d.ProcessGroupGloo(
-                        c10d.PrefixStore("%s/%d" % (prefix, i), store),
-                        self.rank,
-                        self.world_size,
-                        self.opts(),
+                    self._create_process_group_gloo(
+                        c10d.PrefixStore("%s/%d" % (prefix, i), store), self.rank, self.world_size, self.opts()
                     )
                     for i in range(num)
                 ]
@@ -1483,17 +1477,18 @@ class DistributedDataParallelTest(
 
     def _get_process_group(self):
         store = self._get_store()
-        return c10d.ProcessGroupGloo(store, self.rank, self.world_size)
+        c10d.init_process_group(backend="gloo", store=store, rank=self.rank, world_size=self.world_size)
+        return c10d.distributed_c10d._get_default_group()
 
     def _test_gloo_backend(
         self, devices, device_ids, multi_device=False, gradient_as_bucket_view=False
     ):
         store = c10d.FileStore(self.file_name, self.world_size)
-        options = c10d.ProcessGroupGloo._Options()
-        options._devices = [create_device(interface=LOOPBACK)]
-        process_group = c10d.ProcessGroupGloo(
-            store, self.rank, self.world_size, options
-        )
+        c10d.init_process_group(backend="gloo", store=store, rank=self.rank, world_size=self.world_size)
+        process_group = c10d.distributed_c10d._get_default_group()
+        device = devices[-1]
+        backend = process_group._get_backend(device)
+        backend.create_device(interface=LOOPBACK)
         self._test_ddp_with_process_group(
             process_group, devices, device_ids, multi_device, gradient_as_bucket_view
         )
@@ -1577,8 +1572,7 @@ class DistributedDataParallelTest(
             self.assertIsNotNone(t1_p.grad)
             self.assertIsNone(task_unused_p.grad)
 
-        store = c10d.FileStore(self.file_name, self.world_size)
-        process_group = c10d.ProcessGroupGloo(store, self.rank, self.world_size)
+        process_group = self._get_process_group()
 
         # Test on CPU
         cpu_model = DistributedDataParallel(
@@ -1653,8 +1647,7 @@ class DistributedDataParallelTest(
             # Now locally unused parameter should have grad updated on all ranks.
             [self.assertIsNotNone(t_p.grad) for t_p in model.module.task_parameters()]
 
-        store = c10d.FileStore(self.file_name, self.world_size)
-        process_group = c10d.ProcessGroupGloo(store, self.rank, self.world_size)
+        process_group = self._get_process_group()
 
         # Test on CPU
         cpu_model = DistributedDataParallel(
@@ -1680,8 +1673,7 @@ class DistributedDataParallelTest(
         Test that the output of a model can be ignored and that there is no
         implicit requirement that `backward` gets called.
         """
-        store = c10d.FileStore(self.file_name, self.world_size)
-        process_group = c10d.ProcessGroupGloo(store, self.rank, self.world_size)
+        process_group = self._get_process_group()
 
         class IgnoredOutput(nn.Module):
             def __init__(self):
@@ -1723,8 +1715,7 @@ class DistributedDataParallelTest(
         implicit requirement that `backward` gets called, if not all model
         parameters participated in computing the model output.
         """
-        store = c10d.FileStore(self.file_name, self.world_size)
-        process_group = c10d.ProcessGroupGloo(store, self.rank, self.world_size)
+        process_group = self._get_process_group()
 
         class IgnoredOutputWithUnusedParameters(nn.Module):
             def __init__(self):
@@ -1931,8 +1922,7 @@ class DistributedDataParallelTest(
             self.assertEqual(p_non_ddp_withload, p_withoutload)
 
     def _test_sparse_gradients(self, gradient_as_bucket_view=False):
-        store = c10d.FileStore(self.file_name, self.world_size)
-        process_group = c10d.ProcessGroupGloo(store, self.rank, self.world_size)
+        process_group = self._get_process_group()
 
         # Ensure initialized weights and inputs are identical across processes
         torch.manual_seed(1337)
@@ -1961,7 +1951,7 @@ class DistributedDataParallelTest(
         The callback function creates a Future object and sets a value to it.
         """
         store = c10d.FileStore(self.file_name, self.world_size)
-        process_group = c10d.ProcessGroupGloo(store, self.rank, self.world_size)
+        process_group = self._get_process_group()
 
         # Test on CPU
         cpu_model = DistributedDataParallel(
@@ -1999,8 +1989,7 @@ class DistributedDataParallelTest(
         This unit test verifies whether the Future object is passed properly using gloo backend.
         The hook callback function creates a Future object and sets a value to it.
         """
-        store = c10d.FileStore(self.file_name, self.world_size)
-        process_group = c10d.ProcessGroupGloo(store, self.rank, self.world_size)
+        process_group = self._get_process_group()
 
         # Get GPU model with simple_hook registered.
         gpu_model = self._gpu_model_with_ddp_comm_hook(process_group, self._simple_hook)
@@ -2016,8 +2005,7 @@ class DistributedDataParallelTest(
         of hook defined by user. The Python hook must be callable. This test also
         checks whether bucket annotation checked properly if defined.
         """
-        store = c10d.FileStore(self.file_name, self.world_size)
-        process_group = c10d.ProcessGroupGloo(store, self.rank, self.world_size)
+        process_group = self._get_process_group()
 
         model = DistributedDataParallel(
             ModuleForDdpCommHook(), process_group=process_group
@@ -2044,8 +2032,7 @@ class DistributedDataParallelTest(
         checks whether an internal error is thrown if return type is incorrect and user
         hasn't specified any return type annotation.
         """
-        store = c10d.FileStore(self.file_name, self.world_size)
-        process_group = c10d.ProcessGroupGloo(store, self.rank, self.world_size)
+        process_group = self._get_process_group()
 
         model = DistributedDataParallel(
             ModuleForDdpCommHook(), process_group=process_group
@@ -2086,8 +2073,7 @@ class DistributedDataParallelTest(
         DDP communication hook can only be registered once. This test validates whether
         the error is thrown properly when register_comm_hook is called more than once.
         """
-        store = c10d.FileStore(self.file_name, self.world_size)
-        process_group = c10d.ProcessGroupGloo(store, self.rank, self.world_size)
+        process_group = self._get_process_group()
 
         model = DistributedDataParallel(
             ModuleForDdpCommHook(), process_group=process_group
@@ -2112,8 +2098,7 @@ class DistributedDataParallelTest(
         Runs "test_sparse_gradients" unit test with DDP communication hook. We define a
         simple hook that does allreduce and works with gloo backend for this test.
         """
-        store = c10d.FileStore(self.file_name, self.world_size)
-        process_group = c10d.ProcessGroupGloo(store, self.rank, self.world_size)
+        process_group = self._get_process_group()
 
         # Ensure initialized weights and inputs are identical across processes
         torch.manual_seed(1337)
@@ -2159,8 +2144,18 @@ class ReducerModule(nn.Module):
 class ReducerTest(TestCase):
     def setUp(self):
         self.file = tempfile.NamedTemporaryFile(delete=False)
-        self.store = c10d.FileStore(self.file.name, 1)
-        self.process_group = c10d.ProcessGroupGloo(self.store, 0, 1)
+        world_size = 1
+        self.store = c10d.FileStore(self.file.name, world_size)
+        c10d.init_process_group(backend="gloo", store=self.store, rank=0, world_size=world_size)
+        self.process_group = c10d.distributed_c10d._get_default_group()
+
+    def tearDown(self):
+        c10d.destroy_process_group()
+        try:
+            os.remove(self.file.name)
+        except OSError as e:
+            print(str(e))
+            pass
 
     @requires_gloo()
     def test_single_dtype_single_bucket(self):
@@ -2333,12 +2328,11 @@ class CommTest(test_c10d_common.AbstractCommTest, MultiProcessTestCase):
     @skip_if_lt_x_gpu(2)
     def test_broadcast_coalesced_gloo_cuda(self):
         store = c10d.FileStore(self.file_name, self.world_size)
-        options = c10d.ProcessGroupGloo._Options()
-        options._devices = [create_device(interface=LOOPBACK)]
-        process_group = c10d.ProcessGroupGloo(
-            store, self.rank, self.world_size, options
-        )
+        c10d.init_process_group(backend="gloo", store=store, rank=self.rank, world_size=self.world_size)
+        process_group = c10d.distributed_c10d._get_default_group()
         device = torch.device("cuda:%d" % self.rank)
+        backend = process_group._get_backend(device)
+        backend.create_device(interface=LOOPBACK)
         ranks = list(range(self.world_size))
         for root_rank in ranks:
             self._test_broadcast_coalesced(process_group, device, root_rank)
@@ -2346,12 +2340,11 @@ class CommTest(test_c10d_common.AbstractCommTest, MultiProcessTestCase):
     @requires_gloo()
     def test_broadcast_coalesced_gloo_cpu(self):
         store = c10d.FileStore(self.file_name, self.world_size)
-        options = c10d.ProcessGroupGloo._Options()
-        options._devices = [create_device(interface=LOOPBACK)]
-        process_group = c10d.ProcessGroupGloo(
-            store, self.rank, self.world_size, options
-        )
+        c10d.init_process_group(backend="gloo", store=store, rank=self.rank, world_size=self.world_size)
+        process_group = c10d.distributed_c10d._get_default_group()
         device = torch.device("cpu")
+        backend = process_group._get_backend(device)
+        backend.create_device(interface=LOOPBACK)
         ranks = list(range(self.world_size))
         for root_rank in ranks:
             self._test_broadcast_coalesced(process_group, device, root_rank)

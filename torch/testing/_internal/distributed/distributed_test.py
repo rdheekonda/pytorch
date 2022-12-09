@@ -721,10 +721,6 @@ class DistributedTest:
             backend = BACKEND.lower()
             self.assertEqual(dist.Backend(BACKEND.upper()), backend)
             self.assertEqual(dist.Backend(BACKEND), backend)
-            with self.assertRaisesRegex(ValueError, "Invalid backend: 'undefined'"):
-                dist.Backend("undefined")
-            with self.assertRaisesRegex(ValueError, "Invalid backend: 'xYz'"):
-                dist.Backend("xYz")
             with self.assertRaises(ValueError):
                 dist.Backend(None)
             with self.assertRaises(ValueError):
@@ -1389,6 +1385,7 @@ class DistributedTest:
                     RuntimeError, "Tensors must be CUDA and dense"
                 ):
                     send_tensor = _build_tensor(rank + 1)
+                    send_tensor = send_tensor.to_sparse()
                     send_op = dist.P2POp(dist.isend, send_tensor, 1)
                     dist.batch_isend_irecv([send_op])
 
