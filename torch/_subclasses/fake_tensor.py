@@ -16,7 +16,7 @@ from torch.overrides import TorchFunctionMode
 from torch.utils._mode_utils import no_dispatch
 from torch.utils._python_dispatch import TorchDispatchMode
 
-from torch.utils._pytree import PyTree, tree_flatten, tree_map
+from torch.utils._pytree import PyTree, tree_flatten, tree_map, tree_map_only
 
 pytree = torch.utils._pytree
 T = TypeVar("T")
@@ -697,6 +697,7 @@ class FakeTensorMode(TorchDispatchMode):
         allow_fallback_kernels=True,
         allow_meta=False,
         throw_on_data_dependent_ops=True,
+        allow_non_fake_inputs=False,
         shape_env=None,
     ):
         self.allow_fallback_kernels = allow_fallback_kernels
@@ -705,6 +706,10 @@ class FakeTensorMode(TorchDispatchMode):
 
         # TODO: delete arg and default to true. waiting on dynamo perf regression testing
         self.throw_on_data_dependent_ops = throw_on_data_dependent_ops
+
+        # A flag that controls, whether we want to invoke ops on mix of
+        # real weights/global variables and fake inputs
+        self.allow_non_fake_inputs = allow_non_fake_inputs
 
         # [in_kernel_invocation]
         # when FakeTensor is invoked in user code, .device should return
@@ -719,6 +724,8 @@ class FakeTensorMode(TorchDispatchMode):
         self.in_kernel_invocation = False
 
         self.shape_env = shape_env
+
+        self.fakified_real_tensors = set()
 
     def __torch_dispatch__(self, func, types, args=(), kwargs=None):
         kwargs = kwargs if kwargs else {}
@@ -783,11 +790,9 @@ class FakeTensorMode(TorchDispatchMode):
             ), f"{args} {kwargs}"
             return converter(self, args[0])
 
-        if self.check_for_non_fake(flat_arg_tensors):
-            raise Exception(
-                "Invoking operators with non-Fake Tensor inputs in FakeTensorMode is not yet supported. "
-                f"Please convert all Tensors to FakeTensors first. Found in {func}(*{args}, **{kwargs})"
-            )
+        args, kwargs = self.validate_and_convert_non_fake_tensors(
+            flat_arg_tensors, func, converter, args, kwargs
+        )
 
         # The current constant handling only support tracing systems
         # (aot autograd, torchdynamo) where each operation is run consecutively.
@@ -910,10 +915,29 @@ class FakeTensorMode(TorchDispatchMode):
             for x in flat_arg_tensors
         )
 
-    def check_for_non_fake(self, flat_arg_tensors):
-        return any(
-            isinstance(x, torch.Tensor) and not isinstance(x, FakeTensor)
-            for x in flat_arg_tensors
+    def validate_and_convert_non_fake_tensors(
+        self, flat_arg_tensors, func, converter, args, kwargs
+    ):
+        """
+        Checks if the list of tensors are fake tensors.
+        If not, try to convert them to fake tensors.
+        """
+        for x in flat_arg_tensors:
+            if isinstance(x, torch.Tensor) and not isinstance(x, FakeTensor):
+                if torch.Tag.inplace_view in func.tags:  # type: ignore[attr-defined]
+                    raise Exception(
+                        f"Can't call inplace view ops on global variables or model attributes, Found in {func}(*{args}, **{kwargs})"
+                    )
+                if not self.allow_non_fake_inputs:
+                    raise Exception(
+                        "Invoking operators with non-Fake Tensor inputs in FakeTensorMode is not yet supported. "
+                        f"Please convert all Tensors to FakeTensors first. Found in {func}(*{args}, **{kwargs})"
+                    )
+
+        return tree_map_only(
+            torch.Tensor,
+            lambda x: x if isinstance(x, FakeTensor) else converter(self, x),
+            (args, kwargs),
         )
 
     def wrap_meta_outputs_with_default_device_logic(self, r, func, args, kwargs):
