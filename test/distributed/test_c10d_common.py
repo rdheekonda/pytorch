@@ -1550,7 +1550,13 @@ class CompilerTest(MultiProcessTestCase):
             # ProxyTorchDispatchMode only supports torch.Tensor, _ProxyTensor,
             # and torch.nn.Parameter objects
             work.wait()
-            return z * 2
+            # return z * 2
+            if isinstance(z, list):
+                return [zz * 2 for zz in z]
+            elif isinstance(z, torch.Tensor):
+                return z * 2
+            else:
+                raise RuntimeError("Unexpected return type")
 
         xx = x.clone()
 
@@ -1595,7 +1601,7 @@ class CompilerTest(MultiProcessTestCase):
 
         xx += 1
         yy = traced_fn(xx)
-        self.assertFalse(y.allclose(yy))
+        self.assertNotEqual(y, yy)
 
     def _test_allreduce_work_wait(self, tensor):
         def comm_fn(tensor, group=None):
@@ -1636,6 +1642,15 @@ class CompilerTest(MultiProcessTestCase):
             out_tensor = torch.zeros_like(tensor)
             work = dist.scatter(out_tensor, in_tensors, src=0, group=group, async_op=True)
             return work, out_tensor
+
+        self._test_work_wait(tensor, comm_fn=comm_fn)
+
+    def _test_alltoall_work_wait(self, tensor):
+        def comm_fn(tensor, group=None):
+            out_tensors = [torch.zeros_like(tensor) for _ in range(group.size())]
+            in_tensors = [tensor for i in range(group.size())]
+            work = dist.all_to_all(out_tensors, in_tensors, group=group, async_op=True)
+            return work, out_tensors
 
         self._test_work_wait(tensor, comm_fn=comm_fn)
 
