@@ -1205,16 +1205,15 @@ def originate_pairs(
             )
 
 
-def assert_equal(
+def not_close_error_metas(
     actual: Any,
     expected: Any,
     *,
     pair_types: Sequence[Type[Pair]] = (ObjectPair,),
     sequence_types: Tuple[Type, ...] = (collections.abc.Sequence,),
     mapping_types: Tuple[Type, ...] = (collections.abc.Mapping,),
-    msg: Optional[Union[str, Callable[[str], str]]] = None,
     **options: Any,
-) -> None:
+) -> List[ErrorMeta]:
     """Asserts that inputs are equal.
 
     ``actual`` and ``expected`` can be possibly nested :class:`~collections.abc.Sequence`'s or
@@ -1264,11 +1263,7 @@ def assert_equal(
                 "please except the previous error and raise an expressive `ErrorMeta` instead."
             ) from error
 
-    if not error_metas:
-        return
-
-    # TODO: compose all metas into one AssertionError
-    raise error_metas[0].to_error(msg)
+    return error_metas
 
 
 def assert_close(
@@ -1517,7 +1512,7 @@ def assert_close(
     # Hide this function from `pytest`'s traceback
     __tracebackhide__ = True
 
-    assert_equal(
+    error_metas = not_close_error_metas(
         actual,
         expected,
         pair_types=(
@@ -1536,6 +1531,10 @@ def assert_close(
         check_stride=check_stride,
         msg=msg,
     )
+
+    if error_metas:
+        # TODO: compose all metas into one AssertionError
+        raise error_metas[0].to_error(msg)
 
 
 def assert_allclose(
